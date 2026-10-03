@@ -67,7 +67,7 @@ run_quiet() {
     return $rc
 }
 
-# --- Обёртка: запускает блок команд (в subshell) в фоне с логом и спиннером ---
+# --- Обёртка: запускает bash -c скрипт в фоне с логом и спиннером ---
 run_block() {
     local msg="$1"; shift
     ( "$@" ) >> "$LOG_FILE" 2>&1 &
@@ -122,14 +122,12 @@ LOG_RETENTION_DAYS=""
 #  Подготовка debconf (уменьшаем количество диалогов)
 # ============================================================
 configure_debconf() {
-    # Раскладка клавиатуры — US, без диалога
     if command -v debconf-set-selections >/dev/null 2>&1; then
         echo "keyboard-configuration keyboard-configuration/layoutcode select us" | debconf-set-selections 2>/dev/null || true
         echo "keyboard-configuration keyboard-configuration/model select Generic 105-key PC" | debconf-set-selections 2>/dev/null || true
         echo "keyboard-configuration keyboard-configuration/xkb-keymap select us" | debconf-set-selections 2>/dev/null || true
     fi
 
-    # needrestart — не спрашивать про перезапуск сервисов
     export NEEDRESTART_MODE=a
     if [[ -f /etc/needrestart/needrestart.conf ]]; then
         if grep -q '^\s*#\?\$nrconf{restart}' /etc/needrestart/needrestart.conf 2>/dev/null; then
@@ -139,7 +137,6 @@ configure_debconf() {
         fi
     fi
 
-    # Отключаем запросы apt-listchanges (не нужны при неинтерактивных шагах)
     if [[ -f /etc/apt/apt.conf.d/20listchanges ]]; then
         sed -i 's/^\(.*\)apt-listchanges\(.*\)$/#\1apt-listchanges\2 # отключено скриптом/' \
             /etc/apt/apt.conf.d/20listchanges 2>/dev/null || true
@@ -203,7 +200,7 @@ echo -e "${B}── Firewall ──${N}"
 read -rp "  Настроить firewall (ufw/firewalld)? (Y/n): " WANT_FW
 [[ -z "$WANT_FW" ]] && WANT_FW="y"
 if [[ "$WANT_FW" =~ ^[Yy]$ ]]; then
-    read -rp "    Разрешённые TCP-порты [$SSH_PORT 80 443]: " PORTS_INPUT
+    read -rp "    Разрешённые TCP-порты [22 80 443]: " PORTS_INPUT
 fi
 
 # --- Автообновления ---
@@ -289,7 +286,6 @@ update_system() {
 
     if [[ "$OS_FAMILY" == "debian" ]]; then
         if apt update -y && apt upgrade -y; then
-            # Только неинтерактивные команды — в лог
             run_quiet "очистка пакетов" bash -c \
                 "apt autoremove -y && apt autoclean -y"
             ok
@@ -553,20 +549,42 @@ setup_firewall() {
         run_quiet "установка firewalld" dnf install -y firewalld || true
     fi
 
+    # --- Разбор портов ---
     local allowed_ports=()
     if [[ -z "${PORTS_INPUT:-}" ]]; then
-        allowed_ports=("$SSH_PORT" 80 443)
+        allowed_ports=(22 80 443)
     else
         PORTS_INPUT="${PORTS_INPUT//,/ }"
         read -ra allowed_ports <<< "$PORTS_INPUT"
     fi
 
+    # --- Логика: если SSH-порт ≠ 22 и пользователь не указал 22 явно, убираем 22 ---
+    local user_specified_22="no"
+    if [[ -n "${PORTS_INPUT:-}" ]]; then
+        for p in "${allowed_ports[@]}"; do
+            [[ "$p" == "22" ]] && user_specified_22="yes"
+        done
+    fi
+
+    if [[ "$SSH_PORT" != "22" ]] && [[ "$user_specified_22" == "no" ]]; then
+        local filtered=()
+        for p in "${allowed_ports[@]}"; do
+            [[ "$p" != "22" ]] && filtered+=("$p")
+        done
+        allowed_ports=("${filtered[@]}")
+    fi
+
+    # --- Принудительно добавляем фактический SSH-порт ---
     local ssh_present="no"
     for p in "${allowed_ports[@]}"; do
         [[ "$p" == "$SSH_PORT" ]] && ssh_present="yes"
     done
-    [[ "$ssh_present" == "no" ]] && allowed_ports+=("$SSH_PORT")
+    if [[ "$ssh_present" == "no" ]]; then
+        warn "SSH-порт $SSH_PORT отсутствует в списке — добавляю принудительно, чтобы не потерять доступ."
+        allowed_ports+=("$SSH_PORT")
+    fi
 
+    # --- Валидация ---
     local valid_ports=()
     for p in "${allowed_ports[@]}"; do
         if [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; then
@@ -581,7 +599,7 @@ setup_firewall() {
             ufw default deny incoming
             ufw default allow outgoing
             $(for p in "${allowed_ports[@]}"; do
-                local comment='port '$p
+                comment="port $p"
                 [[ "$p" == "$SSH_PORT" ]] && comment="SSH"
                 [[ "$p" == "80" ]]  && comment="HTTP"
                 [[ "$p" == "443" ]] && comment="HTTPS"
@@ -811,7 +829,6 @@ cleanup_logs() {
     step "Очистка логов и мусора"
 
     run_quiet "очистка логов и мусора" bash -c "
-        # journald
         if [[ -f /etc/systemd/journald.conf ]]; then
             grep -q '^#\?SystemMaxUse=' /etc/systemd/journald.conf \
                 && sed -i 's/^#\?SystemMaxUse=.*/SystemMaxUse=500M/' /etc/systemd/journald.conf \
@@ -823,7 +840,6 @@ cleanup_logs() {
             journalctl --vacuum-time='${LOG_RETENTION_DAYS}d' >/dev/null 2>&1 || true
         fi
 
-        # logrotate
         if [[ -d /etc/logrotate.d ]]; then
             for conf in /etc/logrotate.d/*; do
                 [[ -f \"\$conf\" ]] || continue
@@ -832,12 +848,10 @@ cleanup_logs() {
             done
         fi
 
-        # /var/log
         find /var/log -type f \( -name '*.log' -o -name '*.gz' -o -name '*.old' \) -mtime +'${LOG_RETENTION_DAYS}' -delete 2>/dev/null || true
         find /tmp     -type f -mtime +'${LOG_RETENTION_DAYS}' -delete 2>/dev/null || true
         find /var/tmp -type f -mtime +'${LOG_RETENTION_DAYS}' -delete 2>/dev/null || true
 
-        # кэш пакетов
         if [[ '$OS_FAMILY' == 'debian' ]]; then
             apt autoremove -y 2>/dev/null || true
             apt autoclean -y  2>/dev/null || true
@@ -848,7 +862,6 @@ cleanup_logs() {
             find /var/cache/dnf -type f -mtime +'${LOG_RETENTION_DAYS}' -delete 2>/dev/null || true
         fi
 
-        # старые ядра (Debian)
         if [[ '$OS_FAMILY' == 'debian' ]]; then
             current_kernel=\$(uname -r)
             installed_kernels=\$(dpkg --list 'linux-image-*' 2>/dev/null | awk '/^ii/{print \$2}' | grep -v \"\$current_kernel\" | sort -V || true)
