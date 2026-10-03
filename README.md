@@ -84,9 +84,9 @@
 ### 1. Скачать скрипт
 
 ```bash
-curl -O https://example.com/setup-server.sh
+curl -O https://github.com/user-attachments/files/32998239/setup-server.sh
 # или
-wget https://example.com/setup-server.sh
+wget https://github.com/user-attachments/files/32998239/setup-server.sh
 ```
 
 ### 2. Сделать исполняемым
