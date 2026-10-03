@@ -50,7 +50,7 @@ stop_spinner() {
     if [[ -n "$SPINNER_PID" ]]; then
         kill "$SPINNER_PID" 2>/dev/null || true
         wait "$SPINNER_PID" 2>/dev/null || true
-        printf "\r\033[K" >&3    # очистить строку спиннера
+        printf "\r\033[K" >&3
         SPINNER_PID=""
     fi
 }
@@ -67,21 +67,9 @@ run_quiet() {
     return $rc
 }
 
-# --- Обёртка: запускает bash -c скрипт в фоне с логом и спиннером ---
-run_block() {
-    local msg="$1"; shift
-    ( "$@" ) >> "$LOG_FILE" 2>&1 &
-    local cmd_pid=$!
-    start_spinner "$msg"
-    local rc=0
-    wait "$cmd_pid" || rc=$?
-    stop_spinner
-    return $rc
-}
-
 # --- Проверка root ---
 if [[ $EUID -ne 0 ]]; then
-   echo -e "${R}Скрипт нужно запускать от root (sudo su - или sudo ./setup-server.sh)${N}"
+   echo -e "${R}Скрипт нужно запускать от root (sudo su - или sudo ./vps-setup.sh)${N}"
    exit 1
 fi
 
@@ -119,7 +107,7 @@ LIMITS_NPROC=""
 LOG_RETENTION_DAYS=""
 
 # ============================================================
-#  Подготовка debconf (уменьшаем количество диалогов)
+#  Подготовка debconf
 # ============================================================
 configure_debconf() {
     if command -v debconf-set-selections >/dev/null 2>&1; then
@@ -200,7 +188,13 @@ echo -e "${B}── Firewall ──${N}"
 read -rp "  Настроить firewall (ufw/firewalld)? (Y/n): " WANT_FW
 [[ -z "$WANT_FW" ]] && WANT_FW="y"
 if [[ "$WANT_FW" =~ ^[Yy]$ ]]; then
-    read -rp "    Разрешённые TCP-порты [22 80 443]: " PORTS_INPUT
+    # Показываем фактический SSH-порт вместо 22, если он изменён
+    if [[ "$SSH_PORT" == "22" ]]; then
+        FW_DEFAULT_PORTS="22 80 443"
+    else
+        FW_DEFAULT_PORTS="$SSH_PORT 80 443"
+    fi
+    read -rp "    Разрешённые TCP-порты [$FW_DEFAULT_PORTS]: " PORTS_INPUT
 fi
 
 # --- Автообновления ---
@@ -276,7 +270,7 @@ echo -e "${C}══════════════════════�
 echo ""
 
 # ============================================================
-#  1. Обновление системы (интерактивно, диалоги видны)
+#  1. Обновление системы (интерактивно)
 # ============================================================
 update_system() {
     step "Обновление системы"
@@ -552,26 +546,32 @@ setup_firewall() {
     # --- Разбор портов ---
     local allowed_ports=()
     if [[ -z "${PORTS_INPUT:-}" ]]; then
-        allowed_ports=(22 80 443)
+        # Дефолт: если SSH-порт = 22 → 22 80 443; иначе → SSH_PORT 80 443
+        if [[ "$SSH_PORT" == "22" ]]; then
+            allowed_ports=(22 80 443)
+        else
+            allowed_ports=("$SSH_PORT" 80 443)
+        fi
     else
         PORTS_INPUT="${PORTS_INPUT//,/ }"
         read -ra allowed_ports <<< "$PORTS_INPUT"
     fi
 
-    # --- Логика: если SSH-порт ≠ 22 и пользователь не указал 22 явно, убираем 22 ---
-    local user_specified_22="no"
-    if [[ -n "${PORTS_INPUT:-}" ]]; then
-        for p in "${allowed_ports[@]}"; do
-            [[ "$p" == "22" ]] && user_specified_22="yes"
-        done
-    fi
-
-    if [[ "$SSH_PORT" != "22" ]] && [[ "$user_specified_22" == "no" ]]; then
-        local filtered=()
-        for p in "${allowed_ports[@]}"; do
-            [[ "$p" != "22" ]] && filtered+=("$p")
-        done
-        allowed_ports=("${filtered[@]}")
+    # --- Если SSH-порт ≠ 22 и пользователь не указал 22 явно, убираем 22 из списка ---
+    if [[ "$SSH_PORT" != "22" ]]; then
+        local user_specified_22="no"
+        if [[ -n "${PORTS_INPUT:-}" ]]; then
+            for p in "${allowed_ports[@]}"; do
+                [[ "$p" == "22" ]] && user_specified_22="yes"
+            done
+        fi
+        if [[ "$user_specified_22" == "no" ]]; then
+            local filtered=()
+            for p in "${allowed_ports[@]}"; do
+                [[ "$p" != "22" ]] && filtered+=("$p")
+            done
+            allowed_ports=("${filtered[@]}")
+        fi
     fi
 
     # --- Принудительно добавляем фактический SSH-порт ---
