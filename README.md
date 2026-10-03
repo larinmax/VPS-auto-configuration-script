@@ -744,4 +744,73 @@ systemctl status bluetooth
 <details>
 <summary><b>Что такое спиннер в выводе?</b></summary>
 
-Во время длительных
+Во время длительных операций (установка пакетов, настройка firewall, очистка) в строке статуса появляется анимированный индикатор (Braille-символы `⠋⠙⠹…`) и краткое описание операции. По завершении строка заменяется на `OK`, `SKIP` или `FAIL`. Все детали команд при этом пишутся в лог-файл, а не на экран.
+
+</details>
+
+<details>
+<summary><b>Можно ли запускать в фоне (nohup/screen)?</b></summary>
+
+Технически да, но **не рекомендую**:
+- `apt upgrade` на шаге 1 интерактивен — диалоги конфигов не будут видны.
+- Приватный ключ (если генерируется) выводится на экран — в фоне вы его не увидите.
+- Спиннер использует `\r` в TTY, в неинтерактивном режиме будет мусор в логе.
+
+Если всё же нужно — запускайте в `tmux` или `screen`, а не через `nohup`.
+
+</details>
+
+---
+
+## 📂 Структура скрипта
+
+```
+vps-setup.sh
+├── configure_debconf()    # подготовка debconf (без вопросов)
+├── Предварительный опрос (все параметры)
+├── update_system()        # 1  (интерактивно, apt-диалоги видны)
+├── install_utils()        # 2  (curl, wget, git, mc, vim, htop и др.)
+├── setup_ssh()            # 3  (ключи, hardening, drop-in)
+├── setup_fail2ban()       # 4
+├── setup_firewall()       # 5  (динамический SSH-порт)
+├── setup_auto_updates()   # 6
+├── setup_timezone()       # 7
+├── setup_swap()           # 8
+├── setup_sysctl()         # 9
+├── setup_limits()         # 10
+├── disable_icmp()         # 11
+├── cleanup_logs()         # 12
+├── disable_services()     # 13 (bluetooth, cups, avahi, ModemManager, IPv6)
+├── setup_docker()         # 14 (docker-ce + compose-plugin)
+└── print_summary()        # итоговый отчёт
+```
+
+Все детали — в `/var/log/setup-server.log`.
+
+---
+
+## 🤝 Вклад
+
+Pull requests приветствуются. Если нашли баг или хотите добавить фичу:
+
+1. Форкните репозиторий.
+2. Создайте ветку: `git checkout -b feature/my-feature`.
+3. Закоммитьте: `git commit -am 'Add feature'`.
+4. Запушьте: `git push origin feature/my-feature`.
+5. Откройте Pull Request.
+
+---
+
+## 📄 Лицензия
+
+MIT. Используйте свободно, на свой страх и риск. Скрипт меняет системные конфиги — тестируйте на снапшоте перед боевым запуском.
+
+---
+
+<div align="center">
+
+**Если скрипт помог — поставьте ⭐ в репозитории.**
+
+Сделано с ❤️ для тех, кто настраивает серверы руками.
+
+</div>
