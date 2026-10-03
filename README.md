@@ -84,7 +84,7 @@
 ### 1. Скачать скрипт
 
 ```bash
-curl -O https://github.com/larinmax/VPS-auto-configuration-script/releases/download/vps-setup/vps-setup.sh
+curl -L -f -O https://github.com/larinmax/VPS-auto-configuration-script/releases/download/vps-setup/vps-setup.sh
 ```
 #### или
 ```bash
