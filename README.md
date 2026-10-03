@@ -84,9 +84,9 @@
 ### 1. Скачать скрипт
 
 ```bash
-curl -O https://github.com/user-attachments/files/32998239/setup-server.sh
+curl -O https://github.com/larinmax/VPS-auto-configuration-script/blob/main/setup-server.sh
 # или
-wget https://github.com/user-attachments/files/32998239/setup-server.sh
+wget https://github.com/larinmax/VPS-auto-configuration-script/blob/main/setup-server.sh
 ```
 
 ### 2. Сделать исполняемым
